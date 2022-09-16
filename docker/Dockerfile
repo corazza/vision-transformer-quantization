@@ -27,3 +27,6 @@ RUN pip install --no-cache-dir -e .
 
 # internship
 RUN pip install future tensorboard
+
+RUN touch /root/.bashrc \
+    && echo PATH="/ec2-user/scripts:\$PATH" >> /root/.bashrc
