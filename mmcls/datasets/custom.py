@@ -153,6 +153,7 @@ class CustomDataset(BaseDataset):
     def __init__(self,
                  data_prefix: str,
                  pipeline: Sequence = (),
+                 class_prefix: str = None,
                  classes: Union[str, Sequence[str], None] = None,
                  ann_file: Optional[str] = None,
                  extensions: Sequence[str] = ('.jpg', '.jpeg', '.png', '.ppm',
@@ -161,6 +162,7 @@ class CustomDataset(BaseDataset):
                  file_client_args: Optional[dict] = None):
         self.extensions = tuple(set([i.lower() for i in extensions]))
         self.file_client_args = file_client_args
+        self.class_prefix = class_prefix
 
         super().__init__(
             data_prefix=data_prefix,
@@ -218,9 +220,17 @@ class CustomDataset(BaseDataset):
 
         data_infos = []
         for filename, gt_label in samples:
+            try:
+                gt_label = np.array(gt_label, dtype=np.int64)
+            except:
+                file_client = FileClient.infer_client(self.file_client_args,
+                                                    self.class_prefix)
+                # TODO FIXME: this now depends on visit order being the same for train/test/val
+                classes, folder_to_idx = find_folders(self.class_prefix, file_client)
+                gt_label = folder_to_idx[gt_label]
             info = {'img_prefix': self.data_prefix}
             info['img_info'] = {'filename': filename}
-            info['gt_label'] = np.array(gt_label, dtype=np.int64)
+            info['gt_label'] = gt_label
             data_infos.append(info)
         return data_infos
 
