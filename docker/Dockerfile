@@ -21,3 +21,6 @@ RUN conda clean --all
 RUN git clone https://github.com/open-mmlab/mmclassification.git
 WORKDIR ./mmclassification
 RUN pip install --no-cache-dir -e .
+
+# internship
+RUN pip install future tensorboard
