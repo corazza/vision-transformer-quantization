@@ -5,14 +5,14 @@ sys.path.insert(0, '')
 import argparse
 import os
 import warnings
+import IPython
 from numbers import Number
 
 import mmcv
 import numpy as np
 import torch
 from mmcv import DictAction
-from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
-                         wrap_fp16_model)
+from mmcv.runner import (get_dist_info, init_dist, load_checkpoint)
 
 from mmcls.apis import multi_gpu_test, single_gpu_test
 from mmcls.datasets import build_dataloader, build_dataset
@@ -21,6 +21,10 @@ from mmcls.utils import (auto_select_device, get_root_logger,
                          setup_multi_processes, wrap_distributed_model,
                          wrap_non_distributed_model)
 
+from torch.quantization import quantize_dynamic
+from torch.quantization import quantize_fx
+from torch import nn
+from mmcls.models.backbones.swin_transformer import SwinTransformer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='mmcls test model')
@@ -168,9 +172,6 @@ def main():
 
     # build the model and load checkpoint
     model = build_classifier(cfg.model)
-    fp16_cfg = cfg.get('fp16', None)
-    if fp16_cfg is not None:
-        wrap_fp16_model(model)
     checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
 
     if 'CLASSES' in checkpoint.get('meta', {}):
@@ -182,28 +183,17 @@ def main():
                       'meta data, use imagenet by default.')
         CLASSES = ImageNet.CLASSES
 
-    if not distributed:
-        model = wrap_non_distributed_model(
-            model, device=cfg.device, device_ids=cfg.gpu_ids)
-        if cfg.device == 'ipu':
-            from mmcv.device.ipu import cfg2options, ipu_model_wrapper
-            opts = cfg2options(cfg.runner.get('options_cfg', {}))
-            if fp16_cfg is not None:
-                model.half()
-            model = ipu_model_wrapper(model, opts, fp16_cfg=fp16_cfg)
-            data_loader.init(opts['inference'])
-        model.CLASSES = CLASSES
-        show_kwargs = args.show_options or {}
-        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
-                                  **show_kwargs)
-    else:
-        model = wrap_distributed_model(
-            model,
-            device=cfg.device,
-            device_ids=[int(os.environ['LOCAL_RANK'])],
-            broadcast_buffers=False)
-        outputs = multi_gpu_test(model, data_loader, args.tmpdir,
-                                 args.gpu_collect)
+    model = wrap_non_distributed_model(
+        model, device=cfg.device, device_ids=cfg.gpu_ids)
+    model.CLASSES = CLASSES
+    show_kwargs = args.show_options or {}
+
+    # dynamic_quantize(model)
+    model = static_quantize(model, data_loader)
+    # model = static_quantize_fx(model, data_loader)
+
+    outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
+                                **show_kwargs)
 
     rank, _ = get_dist_info()
     if rank == 0:
@@ -244,6 +234,55 @@ def main():
             print(f'\ndumping results to {args.out}')
             mmcv.dump(results, args.out)
 
+
+def dynamic_quantize(model):
+    backend = 'qnnpack'
+    # qconfig = torch.quantization.get_default_qconfig(backend) # (?) ovo ce se koristiti u static kvantizaciji
+    torch.backends.quantized.engine = backend
+    quantize_dynamic(model=model, qconfig_spec={SwinTransformer}, dtype=torch.qint8, inplace=True)
+
+
+def static_quantize(m, data_loader):
+    backend = 'qnnpack'
+    torch.backends.quantized.engine = backend
+    m.eval()
+
+    # m = nn.Sequential(torch.quantization.QuantStub(), 
+    #                 m, 
+    #                 torch.quantization.DeQuantStub())
+
+    m.qconfig = torch.quantization.get_default_qconfig(backend)
+    torch.quantization.prepare(m, inplace=True)
+
+    with torch.no_grad():
+        for i, data in enumerate(data_loader):
+            result = m(return_loss=False, **data)
+            if i > 10:
+                break
+        
+    torch.quantization.convert(m, inplace=True)
+
+    m.to(torch.device('cpu'))
+
+    return m
+
+def static_quantize_fx(m, data_loader):
+    backend = 'qnnpack'
+    torch.backends.quantized.engine = backend
+    m.eval()
+
+    qconfig_dict = {"": torch.quantization.get_default_qconfig(backend)}
+
+    model_prepared = quantize_fx.prepare_fx(m, qconfig_dict)
+
+    with torch.no_grad():
+        for i, data in enumerate(data_loader):
+            result = model_prepared(return_loss=False, **data)
+            if i > 10:
+                break
+
+    model_quantized = quantize_fx.convert_fx(model_prepared)
+    return model_quantized
 
 if __name__ == '__main__':
     main()

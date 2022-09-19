@@ -48,6 +48,8 @@ class WindowMSA(BaseModule):
         self.num_heads = num_heads
         head_embed_dims = embed_dims // num_heads
         self.scale = qk_scale or head_embed_dims**-0.5
+        self.quant = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -81,9 +83,11 @@ class WindowMSA(BaseModule):
             mask (tensor, Optional): mask with shape of (num_windows, Wh*Ww,
                 Wh*Ww), value should be between (-inf, 0].
         """
+        x = self.quant(x)
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads,
                                   C // self.num_heads).permute(2, 0, 3, 1, 4)
+        qkv = self.dequant(qkv)
         q, k, v = qkv[0], qkv[1], qkv[
             2]  # make torchscript happy (cannot use tensor as tuple)
 
@@ -111,8 +115,10 @@ class WindowMSA(BaseModule):
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = self.quant(x)
         x = self.proj(x)
         x = self.proj_drop(x)
+        x = self.dequant(x)        
         return x
 
     @staticmethod

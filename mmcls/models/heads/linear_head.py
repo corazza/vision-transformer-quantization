@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from ..builder import HEADS
 from .cls_head import ClsHead
+import torch
 
 
 @HEADS.register_module()
@@ -25,6 +26,8 @@ class LinearClsHead(ClsHead):
                  *args,
                  **kwargs):
         super(LinearClsHead, self).__init__(init_cfg=init_cfg, *args, **kwargs)
+        self.quant = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
 
         self.in_channels = in_channels
         self.num_classes = num_classes
@@ -61,7 +64,9 @@ class LinearClsHead(ClsHead):
                   float and the dimensions are ``(num_samples, num_classes)``.
         """
         x = self.pre_logits(x)
+        x = self.quant(x)
         cls_score = self.fc(x)
+        cls_score = self.dequant(cls_score)
 
         if softmax:
             pred = (
