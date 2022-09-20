@@ -24,7 +24,7 @@ from mmcls.utils import (auto_select_device, get_root_logger,
 from torch.quantization import quantize_dynamic
 from torch.quantization import quantize_fx
 from torch import nn
-from mmcls.models.internship.backbones.swin_transformer import SwinTransformerQ
+from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
 
 def parse_args():
     parser = argparse.ArgumentParser(description='mmcls test model')
@@ -245,9 +245,6 @@ def dynamic_quantize(model):
 def static_quantize(m, data_loader):
     backend = 'qnnpack'
     torch.backends.quantized.engine = backend
-
-    import IPython
-    IPython.embed()
     m.eval()
 
     m.qconfig = torch.quantization.get_default_qconfig(backend)

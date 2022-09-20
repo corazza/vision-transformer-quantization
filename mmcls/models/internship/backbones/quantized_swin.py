@@ -18,7 +18,8 @@ from ...utils import (ShiftWindowMSA, resize_pos_embed,
 from ...backbones.base_backbone import BaseBackbone
 import torch.nn.quantized
 
-from ..backbones.internship import PatchMerging, FFNI
+from .ffni import FFNI
+from .patch_merging import PatchMerging
 
 import IPython
 
@@ -99,18 +100,6 @@ class SwinBlock(BaseModule):
         self.ffn = FFNI(**_ffn_cfgs)
 
     def forward(self, x, hw_shape):
-
-        # def _inner_forward(x):
-        #     identity = x
-        #     x = self.norm1(x)
-        #     x = self.attn(x, hw_shape)
-        #     x = x + identity
-
-        #     identity = x
-        #     x = self.norm2(x)
-        #     x = self.ffn(x, identity=identity)
-
-        #     return x
 
         def _inner_forward(x):
             identity = x
