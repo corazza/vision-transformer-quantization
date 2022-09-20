@@ -24,7 +24,7 @@ from mmcls.utils import (auto_select_device, get_root_logger,
 from torch.quantization import quantize_dynamic
 from torch.quantization import quantize_fx
 from torch import nn
-from mmcls.models.backbones.swin_transformer import SwinTransformer
+from mmcls.models.internship.backbones.swin_transformer import SwinTransformerQ
 
 def parse_args():
     parser = argparse.ArgumentParser(description='mmcls test model')
@@ -239,30 +239,27 @@ def dynamic_quantize(model):
     backend = 'qnnpack'
     # qconfig = torch.quantization.get_default_qconfig(backend) # (?) ovo ce se koristiti u static kvantizaciji
     torch.backends.quantized.engine = backend
-    quantize_dynamic(model=model, qconfig_spec={SwinTransformer}, dtype=torch.qint8, inplace=True)
+    quantize_dynamic(model=model, qconfig_spec={SwinTransformerQ}, dtype=torch.qint8, inplace=True)
 
 
 def static_quantize(m, data_loader):
     backend = 'qnnpack'
     torch.backends.quantized.engine = backend
-    m.eval()
 
-    # m = nn.Sequential(torch.quantization.QuantStub(), 
-    #                 m, 
-    #                 torch.quantization.DeQuantStub())
+    import IPython
+    IPython.embed()
+    m.eval()
 
     m.qconfig = torch.quantization.get_default_qconfig(backend)
     torch.quantization.prepare(m, inplace=True)
 
     with torch.no_grad():
         for i, data in enumerate(data_loader):
-            result = m(return_loss=False, **data)
-            if i > 10:
+            if i >= 10:
                 break
+            result = m(return_loss=False, **data)
         
     torch.quantization.convert(m, inplace=True)
-
-    m.to(torch.device('cpu'))
 
     return m
 
