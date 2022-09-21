@@ -99,6 +99,9 @@ class SwinBlock(BaseModule):
         self.norm2 = build_norm_layer(norm_cfg, embed_dims)[1]
         self.ffn = FFNI(**_ffn_cfgs)
 
+    def insert_observers(self):
+        self.ffn.insert_observers()
+
     def forward(self, x, hw_shape):
 
         def _inner_forward(x):
@@ -214,6 +217,10 @@ class SwinBlockSequence(BaseModule):
         else:
             out_shape = in_shape
         return x, out_shape
+
+    def insert_observers(self):
+        for block in self.blocks:
+            block.insert_observers()
 
     @property
     def out_channels(self):
@@ -440,6 +447,10 @@ class SwinTransformerQ(BaseBackbone):
 
         if self.use_abs_pos_embed:
             trunc_normal_(self.absolute_pos_embed, std=0.02)
+
+    def insert_observers(self):
+        for i, stage in enumerate(self.stages):
+            stage.insert_observers()
 
     def forward(self, x):
         x = self.quant(x)

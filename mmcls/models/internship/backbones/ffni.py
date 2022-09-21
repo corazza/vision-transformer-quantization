@@ -25,6 +25,26 @@ from mmcv.cnn.bricks.drop import build_dropout
 from mmcv.utils import (ConfigDict, build_from_cfg, deprecated_api_warning,
                         to_2tuple)
 
+import IPython
+
+
+class QuantizedLinear(nn.Linear):
+    def __init__(self, c, e):
+        super(QuantizedLinear, self).__init__(c, e)
+        # self.linear = nn.Linear(c, e)
+        self.quant = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
+        # self.weight = None
+
+    def forward(self, x):
+        try:
+            x = self.quant(x)
+            # x = self.linear(x)
+            x = super(QuantizedLinear, self).forward(x)
+            return self.dequant(x)
+        except:
+            IPython.embed()
+
 
 @FEEDFORWARD_NETWORK.register_module()
 class FFNI(BaseModule):
@@ -48,13 +68,12 @@ class FFNI(BaseModule):
         init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
             Default: None.
     """
-
     @deprecated_api_warning(
         {
             'dropout': 'ffn_drop',
             'add_residual': 'add_identity'
         },
-        cls_name='FFN')
+        cls_name='FFNI')
     def __init__(self,
                  embed_dims=256,
                  feedforward_channels=1024,
@@ -68,10 +87,10 @@ class FFNI(BaseModule):
         super().__init__(init_cfg)
         assert num_fcs == 2, 'num_fcs should be ' \
             f' 2. got {num_fcs}.'
-        self.quant = torch.quantization.QuantStub()
+        self.quant1 = torch.quantization.QuantStub()
+        self.quant2 = torch.quantization.QuantStub()
         self.dequant = torch.quantization.DeQuantStub()
         self.f_add = torch.nn.quantized.FloatFunctional()
-        act_cfg=dict(type='ReLU')
         self.embed_dims = embed_dims
         self.feedforward_channels = feedforward_channels
         self.num_fcs = num_fcs
@@ -81,12 +100,15 @@ class FFNI(BaseModule):
         layers = []
         in_channels = embed_dims
         for _ in range(num_fcs - 1):
-            layers.append(
-                Sequential(
+            layer = Sequential(
                     nn.Linear(in_channels, feedforward_channels), self.activate,
-                    nn.Dropout(ffn_drop)))
+                    # Linear(in_channels, feedforward_channels), self.activate,
+                    nn.Dropout(ffn_drop))
+            layers.append(layer)
             in_channels = feedforward_channels
-        layers.append(nn.Linear(feedforward_channels, embed_dims))
+        layer = nn.Linear(feedforward_channels, embed_dims)
+        # layer = Linear(feedforward_channels, embed_dims)
+        layers.append(layer)
         layers.append(nn.Dropout(ffn_drop))
         self.layers = Sequential(*layers)
 
@@ -94,18 +116,26 @@ class FFNI(BaseModule):
             dropout_layer) if dropout_layer else torch.nn.Identity()
         self.add_identity = add_identity
 
-    @deprecated_api_warning({'residual': 'identity'}, cls_name='FFN')
+    def insert_observers(self):
+        self.activate.qconfig = None
+        self.layers = torch.quantization.add_quant_dequant(self.layers)
+
+    @deprecated_api_warning({'residual': 'identity'}, cls_name='FFNI')
     def forward(self, x, identity=None):
         """Forward function for `FFN`.
 
         The function would add x to the output tensor if residue is None.
         """
-        x = self.quant(x)
+        # x = self.quant1(x)
         out = self.layers(x)
+        out = self.quant1(out)
         if not self.add_identity:
-            return self.dropout_layer(out)
+            return self.dequant(self.dropout_layer(out))
         if identity is None:
-            identity = x
+            identity = self.quant1(x)
+            # identity = x
         else:
-            identity = self.quant(identity)
+            identity = self.quant2(identity)
+            # identity = identity
+        # return identity + self.dropout_layer(out)
         return self.dequant(self.f_add.add(identity, self.dropout_layer(out)))

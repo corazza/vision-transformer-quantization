@@ -26,6 +26,8 @@ from torch.quantization import quantize_fx
 from torch import nn
 from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
 
+from limited_dataset import LimitedDataset
+
 def parse_args():
     parser = argparse.ArgumentParser(description='mmcls test model')
     parser.add_argument('config', help='test config file path')
@@ -144,6 +146,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
+    # dataset = LimitedDataset(dataset, 100)
 
     # build the dataloader
     # The default loader config
@@ -248,15 +251,21 @@ def static_quantize(m, data_loader):
     m.eval()
 
     m.qconfig = torch.quantization.get_default_qconfig(backend)
+    for module in m.modules():
+        module.qconfig = torch.quantization.get_default_qconfig(backend)
+    m.backbone.insert_observers()
     torch.quantization.prepare(m, inplace=True)
+
 
     with torch.no_grad():
         for i, data in enumerate(data_loader):
-            if i >= 10:
+            if i >= 100:
                 break
-            result = m(return_loss=False, **data)
+            m(return_loss=False, **data)
         
     torch.quantization.convert(m, inplace=True)
+
+    IPython.embed()
 
     return m
 
@@ -272,7 +281,7 @@ def static_quantize_fx(m, data_loader):
     with torch.no_grad():
         for i, data in enumerate(data_loader):
             result = model_prepared(return_loss=False, **data)
-            if i > 10:
+            if i > 100:
                 break
 
     model_quantized = quantize_fx.convert_fx(model_prepared)
