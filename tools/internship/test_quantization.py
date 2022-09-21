@@ -12,7 +12,7 @@ import mmcv
 import numpy as np
 import torch
 from mmcv import DictAction
-from mmcv.runner import (get_dist_info, init_dist, load_checkpoint)
+from mmcv.runner import (get_dist_info, init_dist, load_checkpoint, save_checkpoint)
 
 from mmcls.apis import multi_gpu_test, single_gpu_test
 from mmcls.datasets import build_dataloader, build_dataset
@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument('config', help='test config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument('--out', help='output result file')
+    parser.add_argument('--model-out', help='quantized model output file')
     out_options = ['class_scores', 'pred_score', 'pred_label', 'pred_class']
     parser.add_argument(
         '--out-items',
@@ -191,9 +192,10 @@ def main():
     model.CLASSES = CLASSES
     show_kwargs = args.show_options or {}
 
-    # dynamic_quantize(model)
+    size_before = model_size(model)
     model = static_quantize(model, data_loader)
-    # model = static_quantize_fx(model, data_loader)
+    size_after = model_size(model)
+    print(f'size before quantization: {size_before}MB, after: {size_after}MB')
 
     outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                 **show_kwargs)
@@ -243,6 +245,13 @@ def dynamic_quantize(model):
     # qconfig = torch.quantization.get_default_qconfig(backend) # (?) ovo ce se koristiti u static kvantizaciji
     torch.backends.quantized.engine = backend
     quantize_dynamic(model=model, qconfig_spec={SwinTransformerQ}, dtype=torch.qint8, inplace=True)
+
+
+def model_size(model):
+    torch.save(model.state_dict(), "temp.p")
+    size = os.path.getsize("temp.p") / 1e6
+    os.remove('temp.p')
+    return size
 
 
 def static_quantize(m, data_loader):

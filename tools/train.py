@@ -22,6 +22,7 @@ from mmcls.datasets import build_dataset
 from mmcls.models import build_classifier
 from mmcls.utils import (auto_select_device, collect_env, get_root_logger,
                          setup_multi_processes)
+from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
 
 
 def parse_args():

@@ -25,26 +25,6 @@ from mmcv.cnn.bricks.drop import build_dropout
 from mmcv.utils import (ConfigDict, build_from_cfg, deprecated_api_warning,
                         to_2tuple)
 
-import IPython
-
-
-class QuantizedLinear(nn.Linear):
-    def __init__(self, c, e):
-        super(QuantizedLinear, self).__init__(c, e)
-        # self.linear = nn.Linear(c, e)
-        self.quant = torch.quantization.QuantStub()
-        self.dequant = torch.quantization.DeQuantStub()
-        # self.weight = None
-
-    def forward(self, x):
-        try:
-            x = self.quant(x)
-            # x = self.linear(x)
-            x = super(QuantizedLinear, self).forward(x)
-            return self.dequant(x)
-        except:
-            IPython.embed()
-
 
 @FEEDFORWARD_NETWORK.register_module()
 class FFNI(BaseModule):
@@ -85,7 +65,8 @@ class FFNI(BaseModule):
                  init_cfg=None,
                  **kwargs):
         super().__init__(init_cfg)
-        assert num_fcs == 2, 'num_fcs should be ' \
+        act_cfg=dict(type='ReLU', inplace=True)
+        assert num_fcs == 2, 'num_fcs shoGld be ' \
             f' 2. got {num_fcs}.'
         self.quant1 = torch.quantization.QuantStub()
         self.quant2 = torch.quantization.QuantStub()
@@ -117,7 +98,7 @@ class FFNI(BaseModule):
         self.add_identity = add_identity
 
     def insert_observers(self):
-        self.activate.qconfig = None
+        # self.activate.qconfig = None # Needed for skipping GeLU quantization
         self.layers = torch.quantization.add_quant_dequant(self.layers)
 
     @deprecated_api_warning({'residual': 'identity'}, cls_name='FFNI')

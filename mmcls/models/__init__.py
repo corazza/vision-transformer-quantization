@@ -11,5 +11,6 @@ from .internship import * # noqa: F401,F403
 
 __all__ = [
     'BACKBONES', 'HEADS', 'NECKS', 'LOSSES', 'CLASSIFIERS', 'build_backbone',
-    'build_head', 'build_neck', 'build_loss', 'build_classifier'
+    'build_head', 'build_neck', 'build_loss', 'build_classifier',
+    'SwinTransformerQ'
 ]
