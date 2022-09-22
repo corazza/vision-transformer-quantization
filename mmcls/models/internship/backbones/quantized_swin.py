@@ -13,13 +13,14 @@ from mmcv.runner.base_module import BaseModule, ModuleList
 from mmcv.utils.parrots_wrapper import _BatchNorm
 
 from ...builder import BACKBONES
-from ...utils import (ShiftWindowMSA, resize_pos_embed,
+from ...utils import (resize_pos_embed,
                      resize_relative_position_bias_table, to_2tuple)
 from ...backbones.base_backbone import BaseBackbone
 import torch.nn.quantized
 
 from .ffni import FFNI
 from .patch_merging import PatchMerging
+from ..utils.attention import ShiftWindowMSAQ
 
 import IPython
 
@@ -85,7 +86,7 @@ class SwinBlock(BaseModule):
             **attn_cfgs
         }
         self.norm1 = build_norm_layer(norm_cfg, embed_dims)[1]
-        self.attn = ShiftWindowMSA(**_attn_cfgs)
+        self.attn = ShiftWindowMSAQ(**_attn_cfgs)
 
         _ffn_cfgs = {
             'embed_dims': embed_dims,
@@ -339,7 +340,8 @@ class SwinTransformerQ(BaseBackbone):
                  norm_cfg=dict(type='LN'),
                  stage_cfgs=dict(),
                  patch_cfg=dict(),
-                 init_cfg=None):
+                 init_cfg=None,
+                 alt_attn=False):
         super(SwinTransformerQ, self).__init__(init_cfg=init_cfg)
 
         if isinstance(arch, str):

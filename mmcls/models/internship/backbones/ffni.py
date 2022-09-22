@@ -63,9 +63,12 @@ class FFNI(BaseModule):
                  dropout_layer=None,
                  add_identity=True,
                  init_cfg=None,
+                 overwrite_act_with_relu=True,
                  **kwargs):
         super().__init__(init_cfg)
-        act_cfg=dict(type='ReLU', inplace=True)
+        self.overwrite_act_with_relu = overwrite_act_with_relu
+        if self.overwrite_act_with_relu:
+            act_cfg=dict(type='ReLU', inplace=True)
         assert num_fcs == 2, 'num_fcs shoGld be ' \
             f' 2. got {num_fcs}.'
         self.quant1 = torch.quantization.QuantStub()
@@ -98,6 +101,8 @@ class FFNI(BaseModule):
         self.add_identity = add_identity
 
     def insert_observers(self):
+        # if not self.overwrite_act_with_relu:
+        #     self.activate.qconfig = None # Needed for skipping GeLU quantization
         # self.activate.qconfig = None # Needed for skipping GeLU quantization
         self.layers = torch.quantization.add_quant_dequant(self.layers)
 

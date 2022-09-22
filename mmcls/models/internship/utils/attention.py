@@ -97,7 +97,6 @@ class WindowMSA(BaseModule):
         q = self.dequant(q)
         k = self.dequant(k)
         attn = (q @ k.transpose(-2, -1))
-        # attn = self.f_mul.mul(q, k.transpose(-2, -1))
         # attn = self.quant(attn)
 
         relative_position_bias = self.relative_position_bias_table[
@@ -138,7 +137,7 @@ class WindowMSA(BaseModule):
 
 
 @ATTENTION.register_module()
-class ShiftWindowMSA(BaseModule):
+class ShiftWindowMSAQ(BaseModule):
     """Shift Window Multihead Self-Attention Module.
 
     Args:
@@ -310,7 +309,7 @@ class ShiftWindowMSA(BaseModule):
                     cnt += 1
 
             # nW, window_size, window_size, 1
-            mask_windows = ShiftWindowMSA.window_partition(
+            mask_windows = ShiftWindowMSAQ.window_partition(
                 img_mask, window_size)
             mask_windows = mask_windows.view(-1, window_size * window_size)
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)

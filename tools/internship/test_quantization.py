@@ -60,6 +60,11 @@ def parse_args():
         '--gpu-collect',
         action='store_true',
         help='whether to use gpu to collect results')
+    parser.add_argument(
+        '--alt-attn',
+        action='store_true',
+        default=False,
+        help='use alternative attention implementation')
     parser.add_argument('--tmpdir', help='tmp dir for writing some results')
     parser.add_argument(
         '--cfg-options',
@@ -147,7 +152,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
-    # dataset = LimitedDataset(dataset, 100)
+    # dataset = LimitedDataset(dataset, 200)
 
     # build the dataloader
     # The default loader config
@@ -175,8 +180,10 @@ def main():
     data_loader = build_dataloader(dataset, **test_loader_cfg)
 
     # build the model and load checkpoint
+    IPython.embed()
+    cfg.model.backbone.alt_attn = args.alt_attn
     model = build_classifier(cfg.model)
-    checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
+    checkpoint = load_checkpoint(model, args.checkpoint) # , map_location='cpu')
 
     if 'CLASSES' in checkpoint.get('meta', {}):
         CLASSES = checkpoint['meta']['CLASSES']
@@ -255,7 +262,7 @@ def model_size(model):
 
 
 def static_quantize(m, data_loader):
-    backend = 'qnnpack'
+    backend = 'fbgemm'
     torch.backends.quantized.engine = backend
     m.eval()
 
@@ -265,16 +272,13 @@ def static_quantize(m, data_loader):
     m.backbone.insert_observers()
     torch.quantization.prepare(m, inplace=True)
 
-
     with torch.no_grad():
         for i, data in enumerate(data_loader):
-            if i >= 100:
+            if i >= 500:
                 break
             m(return_loss=False, **data)
-        
+    
     torch.quantization.convert(m, inplace=True)
-
-    IPython.embed()
 
     return m
 

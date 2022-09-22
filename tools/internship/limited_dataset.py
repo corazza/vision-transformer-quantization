@@ -1,10 +1,15 @@
 import numpy as np
+import time
+
+def current_milli_time():
+    return round(time.time() * 1000)
 
 class LimitedDataset:
     def __init__(self,
                  dataset,
                  num=100,
                  seed=12345):
+        seed = current_milli_time()
         self.dataset = dataset
         self.CLASSES = dataset.CLASSES
         self.num = num
