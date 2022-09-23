@@ -137,7 +137,7 @@ class WindowMSA(BaseModule):
 
 
 @ATTENTION.register_module()
-class ShiftWindowMSAQ(BaseModule):
+class ShiftWindowMSAQA(BaseModule):
     """Shift Window Multihead Self-Attention Module.
 
     Args:
@@ -309,7 +309,7 @@ class ShiftWindowMSAQ(BaseModule):
                     cnt += 1
 
             # nW, window_size, window_size, 1
-            mask_windows = ShiftWindowMSAQ.window_partition(
+            mask_windows = ShiftWindowMSAQA.window_partition(
                 img_mask, window_size)
             mask_windows = mask_windows.view(-1, window_size * window_size)
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)

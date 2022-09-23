@@ -21,6 +21,7 @@ import torch.nn.quantized
 from .ffni import FFNI
 from .patch_merging import PatchMerging
 from ..utils.attention import ShiftWindowMSAQ
+from ..utils.attention_alternative import ShiftWindowMSAQA
 
 import IPython
 
