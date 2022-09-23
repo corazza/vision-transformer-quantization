@@ -103,6 +103,9 @@ class SwinBlock(BaseModule):
     def insert_observers(self):
         self.ffn.insert_observers()
 
+    def quantize_rel_position_bias(self):
+        self.attn.quantize_rel_position_bias()
+
     def forward(self, x, hw_shape):
 
         def _inner_forward(x):
@@ -222,6 +225,10 @@ class SwinBlockSequence(BaseModule):
     def insert_observers(self):
         for block in self.blocks:
             block.insert_observers()
+
+    def quantize_rel_position_bias(self):
+        for block in self.blocks:
+            block.quantize_rel_position_bias()
 
     @property
     def out_channels(self):
@@ -453,6 +460,10 @@ class SwinTransformerQ(BaseBackbone):
     def insert_observers(self):
         for i, stage in enumerate(self.stages):
             stage.insert_observers()
+
+    def quantize_rel_position_bias(self):
+        for i, stage in enumerate(self.stages):
+            stage.quantize_rel_position_bias()
 
     def forward(self, x):
         x = self.quant(x)

@@ -25,6 +25,7 @@ from torch.quantization import quantize_dynamic
 from torch.quantization import quantize_fx
 from torch import nn
 from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
+from mmcls.models.internship.utils.quantized_ops import ExtendedQuantizedObservers, ExtendedQuantizedOps
 
 from limited_dataset import LimitedDataset
 
@@ -152,7 +153,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
-    # dataset = LimitedDataset(dataset, 200)
+    dataset = LimitedDataset(dataset, 200)
 
     # build the dataloader
     # The default loader config
@@ -180,7 +181,6 @@ def main():
     data_loader = build_dataloader(dataset, **test_loader_cfg)
 
     # build the model and load checkpoint
-    IPython.embed()
     cfg.model.backbone.alt_attn = args.alt_attn
     model = build_classifier(cfg.model)
     checkpoint = load_checkpoint(model, args.checkpoint) # , map_location='cpu')
@@ -269,16 +269,31 @@ def static_quantize(m, data_loader):
     m.qconfig = torch.quantization.get_default_qconfig(backend)
     for module in m.modules():
         module.qconfig = torch.quantization.get_default_qconfig(backend)
+
     m.backbone.insert_observers()
-    torch.quantization.prepare(m, inplace=True)
+
+    prepare_custom_config_dict = {
+        "float_to_observed_custom_module_class": {
+            nn.Softmax: ExtendedQuantizedObservers
+        }
+    }
+    torch.quantization.prepare(m, inplace=True, prepare_custom_config_dict=prepare_custom_config_dict)
+    # torch.quantization.prepare(m, inplace=True)
 
     with torch.no_grad():
         for i, data in enumerate(data_loader):
-            if i >= 500:
+            if i >= 10:
                 break
             m(return_loss=False, **data)
-    
-    torch.quantization.convert(m, inplace=True)
+
+    convert_custom_config_dict = {
+        "observed_to_quantized_custom_module_class": {
+            ExtendedQuantizedObservers: ExtendedQuantizedOps
+        }
+    }
+
+    torch.quantization.convert(m, inplace=True, convert_custom_config_dict=convert_custom_config_dict)
+    m.backbone.quantize_rel_position_bias()
 
     return m
 
