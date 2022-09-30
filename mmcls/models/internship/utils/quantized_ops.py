@@ -6,19 +6,38 @@ from torch.nn import functional as F
 import IPython
 
 
-class ExtendedQuantizedObservers(torch.nn.Module):
-    def __init__(self, dim=-1):
-        super(ExtendedQuantizedObservers, self).__init__()
-        self.dim = dim
+class ExtendedQuantizedOpsStub(torch.nn.Module):
+    def __init__(self):
+        super(ExtendedQuantizedOpsStub, self).__init__()
 
     def forward(self, x):
         raise RuntimeError("FloatFunctional is not intended to use the " +
                            "'forward'. Please use the underlying operation")
 
-    def softmax(self, x: Tensor) -> Tensor:
-        r = F.softmax(x, dim=self.dim)
+    def softmax(self, x: Tensor, dim=-1) -> Tensor:
+        return F.softmax(x, dim=dim)
+
+    def matmul(self, x: Tensor, y: Tensor) -> Tensor:
+        return torch.matmul(x, y)
+
+        
+class ExtendedQuantizedOpsObserver(torch.nn.Module):
+    def __init__(self):
+        super(ExtendedQuantizedOpsObserver, self).__init__()
+
+    def forward(self, x):
+        raise RuntimeError("FloatFunctional is not intended to use the " +
+                           "'forward'. Please use the underlying operation")
+
+    def softmax(self, x: Tensor, dim=-1) -> Tensor:
+        r = F.softmax(x, dim=dim)
         r = self.activation_post_process(r)
-        return r # TODO FIXME observer -> quantizer doesn't carry over dim information, had to hardcode
+        return r
+
+    def matmul(self, x: Tensor, y: Tensor) -> Tensor:
+        r = torch.matmul(x, y)
+        r = self.activation_post_process(r)
+        return r
 
     @classmethod
     def from_float(cls, float_module):
@@ -29,9 +48,8 @@ class ExtendedQuantizedObservers(torch.nn.Module):
 
 
 class ExtendedQuantizedOps(torch.nn.Module):
-    def __init__(self, dim):
+    def __init__(self):
         super(ExtendedQuantizedOps, self).__init__()
-        self.dim = dim
         self.scale = 1.0
         self.zero_point = 0
         self.activation_post_process = torch.nn.Identity()
@@ -61,8 +79,14 @@ class ExtendedQuantizedOps(torch.nn.Module):
         raise RuntimeError("Functional is not intended to use the " +
                            "'forward'. Please use the underlying operation")
 
-    def softmax(self, x: Tensor) -> Tensor:
-        r = torch.ops.quantized.softmax(x, self.dim, self.scale, self.zero_point)
+    def softmax(self, x: Tensor, dim=-1) -> Tensor:
+        r = torch.ops.quantized.softmax(x, dim, self.scale, self.zero_point)
+        r = self.activation_post_process(r)
+        return r
+
+    def matmul(self, x: Tensor, y: Tensor) -> Tensor:
+        IPython.embed()
+        r = torch.ops.quantized.matmul(x, y, self.scale, self.zero_point)
         r = self.activation_post_process(r)
         return r
 
@@ -70,10 +94,10 @@ class ExtendedQuantizedOps(torch.nn.Module):
     def from_observed(cls, mod):
         assert hasattr(mod, 'qconfig')
         assert hasattr(mod, 'activation_post_process')
-        assert type(mod) == ExtendedQuantizedObservers,\
+        assert type(mod) == ExtendedQuantizedOpsObserver,\
             "ExtendedQuantizedObservers.from_float expects an instance of ExtendedQuantizedObservers"
         scale, zero_point = mod.activation_post_process.calculate_qparams()  # type: ignore[operator]
-        new_mod = ExtendedQuantizedOps(mod.dim)
+        new_mod = ExtendedQuantizedOps()
         new_mod.scale = float(scale)
         new_mod.zero_point = int(zero_point)
         return new_mod

@@ -7,6 +7,7 @@ import os
 import warnings
 import IPython
 from numbers import Number
+import copy
 
 import mmcv
 import numpy as np
@@ -25,7 +26,7 @@ from torch.quantization import quantize_dynamic
 from torch.quantization import quantize_fx
 from torch import nn
 from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
-from mmcls.models.internship.utils.quantized_ops import ExtendedQuantizedObservers, ExtendedQuantizedOps
+from mmcls.models.internship.utils.quantized_ops import *
 
 from limited_dataset import LimitedDataset
 
@@ -153,7 +154,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
-    dataset = LimitedDataset(dataset, 200)
+    dataset = LimitedDataset(dataset, 5)
 
     # build the dataloader
     # The default loader config
@@ -199,10 +200,13 @@ def main():
     model.CLASSES = CLASSES
     show_kwargs = args.show_options or {}
 
-    size_before = model_size(model)
+    old_model = copy.deepcopy(model)
     model = static_quantize(model, data_loader)
+
+    size_before = model_size(old_model)
     size_after = model_size(model)
     print(f'size before quantization: {size_before}MB, after: {size_after}MB')
+    profile_both(old_model, model, data_loader)
 
     outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                 **show_kwargs)
@@ -261,6 +265,41 @@ def model_size(model):
     return size
 
 
+import cProfile
+import io
+import pstats
+
+def profile(func):
+    def wrapper(*args, **kwargs):
+        pr = cProfile.Profile()
+        pr.enable()
+        retval = func(*args, **kwargs)
+        pr.disable()
+        s = io.StringIO()
+        sortby = pstats.SortKey.CUMULATIVE  # 'cumulative'
+        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print(s.getvalue())
+        return retval
+
+    return wrapper
+
+
+@profile
+def profiling_helper(m, data_loader):
+    with torch.no_grad():
+        for i, data in enumerate(data_loader):
+            if i >= 10:
+                break
+            m(return_loss=False, **data)
+
+def profile_both(old_model, model, data_loader):
+    print("regular model:")
+    profiling_helper(old_model, data_loader)
+    print("quantized model:")
+    profiling_helper(model, data_loader)
+
+
 def static_quantize(m, data_loader):
     backend = 'fbgemm'
     torch.backends.quantized.engine = backend
@@ -274,7 +313,8 @@ def static_quantize(m, data_loader):
 
     prepare_custom_config_dict = {
         "float_to_observed_custom_module_class": {
-            nn.Softmax: ExtendedQuantizedObservers
+            nn.Softmax: ExtendedQuantizedOpsObserver,
+            ExtendedQuantizedOpsStub: ExtendedQuantizedOpsObserver
         }
     }
     torch.quantization.prepare(m, inplace=True, prepare_custom_config_dict=prepare_custom_config_dict)
@@ -288,7 +328,7 @@ def static_quantize(m, data_loader):
 
     convert_custom_config_dict = {
         "observed_to_quantized_custom_module_class": {
-            ExtendedQuantizedObservers: ExtendedQuantizedOps
+            ExtendedQuantizedOpsObserver: ExtendedQuantizedOps,
         }
     }
 

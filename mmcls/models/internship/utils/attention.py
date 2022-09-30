@@ -10,7 +10,7 @@ from mmcv.runner.base_module import BaseModule
 
 from ...builder import ATTENTION
 from ...utils.helpers import to_2tuple
-from .quantized_ops import ExtendedQuantizedObservers
+from .quantized_ops import ExtendedQuantizedOpsStub
 
 import IPython
 
@@ -51,13 +51,11 @@ class WindowMSA(BaseModule):
         head_embed_dims = embed_dims // num_heads
         self.scale = qk_scale or head_embed_dims**-0.5
 
-        self.quant1 = torch.quantization.QuantStub()
-        self.quant2 = torch.quantization.QuantStub()
-        self.quant3 = torch.quantization.QuantStub()
-        self.quant4 = torch.quantization.QuantStub()
+        self.quant = torch.quantization.QuantStub()
         self.dequant = torch.quantization.DeQuantStub()
         self.f_mul = torch.nn.quantized.FloatFunctional()
         self.f_add = torch.nn.quantized.FloatFunctional()
+        self.matmul = ExtendedQuantizedOpsStub()
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -76,7 +74,8 @@ class WindowMSA(BaseModule):
         self.proj = nn.Linear(embed_dims, embed_dims)
         self.proj_drop = nn.Dropout(proj_drop)
 
-        self.softmax = nn.Softmax(dim=-1)
+        # self.softmax = nn.Softmax(dim=-1)
+        self.softmax = ExtendedQuantizedOpsStub()
         self.use_qtable = False
 
     def init_weights(self):
@@ -85,7 +84,7 @@ class WindowMSA(BaseModule):
         trunc_normal_(self.relative_position_bias_table, std=0.02)
 
     def quantize_rel_position_bias(self):
-        self.qrelative_position_bias_table = self.quant1(self.relative_position_bias_table)
+        self.qrelative_position_bias_table = self.quant(self.relative_position_bias_table)
         self.use_qtable = True
 
     def forward(self, x, mask=None):
@@ -96,9 +95,9 @@ class WindowMSA(BaseModule):
             mask (tensor, Optional): mask with shape of (num_windows, Wh*Ww,
                 Wh*Ww), value should be between (-inf, 0].
         """
-        x = self.quant1(x)
+        x = self.quant(x)
         if mask != None:
-            mask = self.quant1(mask)
+            mask = self.quant(mask)
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads,
                                   C // self.num_heads).permute(2, 0, 3, 1, 4)
@@ -106,10 +105,7 @@ class WindowMSA(BaseModule):
             2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = self.f_mul.mul_scalar(q, self.scale)
-        q = self.dequant(q)
-        k = self.dequant(k)
-        attn = (q @ k.transpose(-2, -1))
-        attn = self.quant2(attn)
+        attn = self.matmul.matmul(q, k.transpose(-2, -1))
 
         if self.use_qtable:
             relative_position_bias_table = self.qrelative_position_bias_table 
@@ -137,10 +133,7 @@ class WindowMSA(BaseModule):
 
         attn = self.attn_drop(attn)
 
-        v = self.dequant(v)
-        attn = self.dequant(attn)
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-        x = self.quant4(x)
+        x = self.matmul.matmul(attn, v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         x = self.dequant(x)
@@ -198,7 +191,6 @@ class ShiftWindowMSAQ(BaseModule):
         super().__init__(init_cfg)
         self.quant1 = torch.quantization.QuantStub()
         self.quant2 = torch.quantization.QuantStub()
-        self.quant3 = torch.quantization.QuantStub()
         self.dequant = torch.quantization.DeQuantStub()
 
         if input_resolution is not None or auto_pad is not None:
@@ -262,8 +254,10 @@ class ShiftWindowMSAQ(BaseModule):
 
         # cyclic shift
         if shift_size > 0:
+            # query = self.dequant(query)
             query = torch.roll(
                 query, shifts=(-shift_size, -shift_size), dims=(1, 2))
+            # query = self.quant2(query)
 
         attn_mask = self.get_attn_mask((H_pad, W_pad),
                                        window_size=window_size,
@@ -277,6 +271,7 @@ class ShiftWindowMSAQ(BaseModule):
 
         # W-MSA/SW-MSA (nW*B, window_size*window_size, C)
         if attn_mask != None:
+            attn_mask = self.dequant(attn_mask)
             attn_mask = self.dequant(attn_mask)
         query_windows = self.dequant(query_windows)
         attn_windows = self.w_msa(query_windows, mask=attn_mask)
@@ -320,10 +315,11 @@ class ShiftWindowMSAQ(BaseModule):
         windows = windows.view(-1, window_size, window_size, C)
         return windows
 
+    # TODO FIXME QUANTIZE
     def get_attn_mask(self, hw_shape, window_size, shift_size, device=None):
         if shift_size > 0:
             img_mask = torch.zeros(1, *hw_shape, 1, device=device)
-            img_mask = self.quant1(img_mask)
+            # img_mask = self.quant1(img_mask)
             
             h_slices = (slice(0, -window_size), slice(-window_size,
                                                       -shift_size),
@@ -334,6 +330,9 @@ class ShiftWindowMSAQ(BaseModule):
             cnt = 0
             for h in h_slices:
                 for w in w_slices:
+                    # cnt_q = torch.tensor(cnt, dtype=torch.float32)
+                    # cnt_q = self.quant1(cnt_q)
+                    # img_mask[:, h, w, :] = cnt_q
                     img_mask[:, h, w, :] = cnt
                     cnt += 1
 
