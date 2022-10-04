@@ -254,10 +254,10 @@ class ShiftWindowMSAQ(BaseModule):
 
         # cyclic shift
         if shift_size > 0:
-            # query = self.dequant(query)
+            query = self.dequant(query)
             query = torch.roll(
                 query, shifts=(-shift_size, -shift_size), dims=(1, 2))
-            # query = self.quant2(query)
+            query = self.quant2(query)
 
         attn_mask = self.get_attn_mask((H_pad, W_pad),
                                        window_size=window_size,

@@ -154,7 +154,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
-    dataset = LimitedDataset(dataset, 5)
+    # dataset = LimitedDataset(dataset, 20)
 
     # build the dataloader
     # The default loader config
@@ -206,8 +206,6 @@ def main():
     size_before = model_size(old_model)
     size_after = model_size(model)
     print(f'size before quantization: {size_before}MB, after: {size_after}MB')
-    profile_both(old_model, model, data_loader)
-
     outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                 **show_kwargs)
 
@@ -276,7 +274,7 @@ def profile(func):
         retval = func(*args, **kwargs)
         pr.disable()
         s = io.StringIO()
-        sortby = pstats.SortKey.CUMULATIVE  # 'cumulative'
+        sortby = pstats.SortKey.TIME  # 'cumulative'
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print(s.getvalue())
@@ -289,8 +287,6 @@ def profile(func):
 def profiling_helper(m, data_loader):
     with torch.no_grad():
         for i, data in enumerate(data_loader):
-            if i >= 10:
-                break
             m(return_loss=False, **data)
 
 def profile_both(old_model, model, data_loader):

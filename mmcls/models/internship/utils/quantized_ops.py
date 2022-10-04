@@ -85,7 +85,6 @@ class ExtendedQuantizedOps(torch.nn.Module):
         return r
 
     def matmul(self, x: Tensor, y: Tensor) -> Tensor:
-        IPython.embed()
         r = torch.ops.quantized.matmul(x, y, self.scale, self.zero_point)
         r = self.activation_post_process(r)
         return r
