@@ -15,7 +15,6 @@ import torch
 from mmcv import DictAction
 from mmcv.runner import (get_dist_info, init_dist, load_checkpoint, save_checkpoint)
 
-from mmcls.apis import multi_gpu_test, single_gpu_test
 from mmcls.datasets import build_dataloader, build_dataset
 from mmcls.models import build_classifier
 from mmcls.utils import (auto_select_device, get_root_logger,
@@ -29,6 +28,9 @@ from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
 from mmcls.models.internship.utils.quantized_ops import *
 
 from limited_dataset import LimitedDataset
+
+from vt_test import single_gpu_test
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='mmcls test model')
@@ -154,7 +156,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
-    # dataset = LimitedDataset(dataset, 20)
+    dataset = LimitedDataset(dataset, 200)
 
     # build the dataloader
     # The default loader config
@@ -206,48 +208,60 @@ def main():
     size_before = model_size(old_model)
     size_after = model_size(model)
     print(f'size before quantization: {size_before}MB, after: {size_after}MB')
-    outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
+
+    fps_old, outputs_old = single_gpu_test(old_model, data_loader, args.show, args.show_dir, **show_kwargs)
+    results_old = process_outputs(dataset, outputs_old, fps_old, args, model)
+    fps, outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                 **show_kwargs)
+    results = process_outputs(dataset, outputs, fps, args, model)
 
-    rank, _ = get_dist_info()
-    if rank == 0:
-        results = {}
-        logger = get_root_logger()
-        if args.metrics:
-            eval_results = dataset.evaluate(
-                results=outputs,
-                metric=args.metrics,
-                metric_options=args.metric_options,
-                logger=logger)
-            results.update(eval_results)
-            for k, v in eval_results.items():
-                if isinstance(v, np.ndarray):
-                    v = [round(out, 2) for out in v.tolist()]
-                elif isinstance(v, Number):
-                    v = round(v, 2)
-                else:
-                    raise ValueError(f'Unsupport metric type: {type(v)}')
-                print(f'\n{k} : {v}')
-        if args.out:
-            if 'none' not in args.out_items:
-                scores = np.vstack(outputs)
-                pred_score = np.max(scores, axis=1)
-                pred_label = np.argmax(scores, axis=1)
-                pred_class = [CLASSES[lb] for lb in pred_label]
-                res_items = {
-                    'class_scores': scores,
-                    'pred_score': pred_score,
-                    'pred_label': pred_label,
-                    'pred_class': pred_class
-                }
-                if 'all' in args.out_items:
-                    results.update(res_items)
-                else:
-                    for key in args.out_items:
-                        results[key] = res_items[key]
-            print(f'\ndumping results to {args.out}')
-            mmcv.dump(results, args.out)
+    print('results on original model:')
+    print(results_old)
+    print('results on quantized model:')
+    print(results)
 
+    final_results = {
+        'quantized': results,
+        'nonquantized': results_old,
+    }
+
+    mmcv.dump(final_results, args.out)
+
+
+def process_outputs(dataset, outputs, fps, args, model):
+    logger = get_root_logger()
+    results = {'fps': fps}
+    eval_results = dataset.evaluate(
+        results=outputs,
+        metric=args.metrics,
+        metric_options=args.metric_options,
+        logger=logger)
+    results.update(eval_results)
+    for k, v in eval_results.items():
+        if isinstance(v, np.ndarray):
+            v = [round(out, 2) for out in v.tolist()]
+        elif isinstance(v, Number):
+            v = round(v, 2)
+        else:
+            raise ValueError(f'Unsupport metric type: {type(v)}')
+
+    if 'none' not in args.out_items:
+        scores = np.vstack(outputs)
+        pred_score = np.max(scores, axis=1)
+        pred_label = np.argmax(scores, axis=1)
+        pred_class = [model.CLASSES[lb] for lb in pred_label]
+        res_items = {
+            'class_scores': scores,
+            'pred_score': pred_score,
+            'pred_label': pred_label,
+            'pred_class': pred_class
+        }
+        if 'all' in args.out_items:
+            results.update(res_items)
+        else:
+            for key in args.out_items:
+                results[key] = res_items[key]
+    return results
 
 def dynamic_quantize(model):
     backend = 'qnnpack'
@@ -301,11 +315,14 @@ def static_quantize(m, data_loader):
     torch.backends.quantized.engine = backend
     m.eval()
 
-    m.qconfig = torch.quantization.get_default_qconfig(backend)
-    for module in m.modules():
-        module.qconfig = torch.quantization.get_default_qconfig(backend)
+    m.qconfig = torch.quantization.get_default_qconfig('qnnpack')
+    for module in m.modules():        
+        module.qconfig = m.qconfig
 
-    m.backbone.insert_observers()
+    if hasattr(m, 'module'):
+        m.module.backbone.insert_observers()
+    else:
+        m.backbone.insert_observers()
 
     prepare_custom_config_dict = {
         "float_to_observed_custom_module_class": {
@@ -329,7 +346,11 @@ def static_quantize(m, data_loader):
     }
 
     torch.quantization.convert(m, inplace=True, convert_custom_config_dict=convert_custom_config_dict)
-    m.backbone.quantize_rel_position_bias()
+
+    if hasattr(m, 'module'):
+        m.module.backbone.quantize_rel_position_bias()
+    else:
+        m.backbone.quantize_rel_position_bias()
 
     return m
 

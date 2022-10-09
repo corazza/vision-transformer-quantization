@@ -136,6 +136,5 @@ venv.bak/
 
 # custom
 .devcontainer.json
-pcnopo
 scripts/pc2noport_start.sh
 scripts/pc3noport_start.sh

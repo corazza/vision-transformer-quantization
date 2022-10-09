@@ -23,6 +23,7 @@ from mmcls.models import build_classifier
 from mmcls.utils import (auto_select_device, collect_env, get_root_logger,
                          setup_multi_processes)
 from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
+from mmcls.models.internship.backbones.quantized_vit import VisionTransformerQ
 
 
 def parse_args():

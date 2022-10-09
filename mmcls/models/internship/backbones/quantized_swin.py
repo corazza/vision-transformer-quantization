@@ -1,4 +1,3 @@
-# Copyright (c) OpenMMLab. All rights reserved.
 from copy import deepcopy
 from typing import Sequence
 
@@ -21,7 +20,6 @@ import torch.nn.quantized
 from .ffni import FFNI
 from .patch_merging import PatchMerging
 from ..utils.attention import ShiftWindowMSAQ
-from ..utils.attention_alternative import ShiftWindowMSAQA
 
 import IPython
 
@@ -95,7 +93,7 @@ class SwinBlock(BaseModule):
             'num_fcs': 2,
             'ffn_drop': 0,
             'dropout_layer': dict(type='DropPath', drop_prob=drop_path),
-            'act_cfg': dict(type='GELU'),
+            'act_cfg': dict(type='ReLU'),
             **ffn_cfgs
         }
         self.norm2 = build_norm_layer(norm_cfg, embed_dims)[1]
