@@ -25,7 +25,9 @@ from torch.quantization import quantize_dynamic
 from torch.quantization import quantize_fx
 from torch import nn
 from mmcls.models.internship.backbones.quantized_swin import SwinTransformerQ
+from mmcls.models.internship.backbones.quantized_vit import VisionTransformerQ
 from mmcls.models.internship.utils.quantized_ops import *
+from mmcls.models.internship.utils.quantized_vit_head import VisionTransformerClsHeadQ
 
 from limited_dataset import LimitedDataset
 
@@ -156,7 +158,7 @@ def main():
         init_dist(args.launcher, **cfg.dist_params)
 
     dataset = build_dataset(cfg.data.test, default_args=dict(test_mode=True))
-    dataset = LimitedDataset(dataset, 200)
+    # dataset = LimitedDataset(dataset, 200)
 
     # build the dataloader
     # The default loader config
@@ -184,7 +186,7 @@ def main():
     data_loader = build_dataloader(dataset, **test_loader_cfg)
 
     # build the model and load checkpoint
-    cfg.model.backbone.alt_attn = args.alt_attn
+    # cfg.model.backbone.alt_attn = args.alt_attn
     model = build_classifier(cfg.model)
     checkpoint = load_checkpoint(model, args.checkpoint) # , map_location='cpu')
 
@@ -211,9 +213,11 @@ def main():
 
     fps_old, outputs_old = single_gpu_test(old_model, data_loader, args.show, args.show_dir, **show_kwargs)
     results_old = process_outputs(dataset, outputs_old, fps_old, args, model)
+    results_old['size'] = size_before
     fps, outputs = single_gpu_test(model, data_loader, args.show, args.show_dir,
                                 **show_kwargs)
     results = process_outputs(dataset, outputs, fps, args, model)
+    results['size'] = size_after
 
     print('results on original model:')
     print(results_old)
@@ -262,12 +266,6 @@ def process_outputs(dataset, outputs, fps, args, model):
             for key in args.out_items:
                 results[key] = res_items[key]
     return results
-
-def dynamic_quantize(model):
-    backend = 'qnnpack'
-    # qconfig = torch.quantization.get_default_qconfig(backend) # (?) ovo ce se koristiti u static kvantizaciji
-    torch.backends.quantized.engine = backend
-    quantize_dynamic(model=model, qconfig_spec={SwinTransformerQ}, dtype=torch.qint8, inplace=True)
 
 
 def model_size(model):
@@ -335,7 +333,7 @@ def static_quantize(m, data_loader):
 
     with torch.no_grad():
         for i, data in enumerate(data_loader):
-            if i >= 10:
+            if i >= 100:
                 break
             m(return_loss=False, **data)
 
@@ -348,29 +346,13 @@ def static_quantize(m, data_loader):
     torch.quantization.convert(m, inplace=True, convert_custom_config_dict=convert_custom_config_dict)
 
     if hasattr(m, 'module'):
-        m.module.backbone.quantize_rel_position_bias()
+        if hasattr(m.module.backbone, 'quantize_rel_position_bias'):
+            m.module.backbone.quantize_rel_position_bias()
     else:
-        m.backbone.quantize_rel_position_bias()
+        if hasattr(m.backbone, 'quantize_rel_position_bias'):
+            m.backbone.quantize_rel_position_bias()
 
     return m
-
-def static_quantize_fx(m, data_loader):
-    backend = 'qnnpack'
-    torch.backends.quantized.engine = backend
-    m.eval()
-
-    qconfig_dict = {"": torch.quantization.get_default_qconfig(backend)}
-
-    model_prepared = quantize_fx.prepare_fx(m, qconfig_dict)
-
-    with torch.no_grad():
-        for i, data in enumerate(data_loader):
-            result = model_prepared(return_loss=False, **data)
-            if i > 100:
-                break
-
-    model_quantized = quantize_fx.convert_fx(model_prepared)
-    return model_quantized
 
 if __name__ == '__main__':
     main()

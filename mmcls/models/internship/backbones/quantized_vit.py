@@ -15,6 +15,9 @@ from .ffni import FFNI
 from ..utils.attention import MultiheadAttentionQ
 from mmcv.cnn.bricks.transformer import PatchEmbed
 
+import IPython
+
+
 class TransformerEncoderLayer(BaseModule):
     """Implements one encoder layer in Vision Transformer.
 
@@ -83,6 +86,9 @@ class TransformerEncoderLayer(BaseModule):
             dropout_layer=dict(type='DropPath', drop_prob=drop_path_rate),
             act_cfg=act_cfg)
 
+    def insert_observers(self):
+        self.ffn.insert_observers()
+
     @property
     def norm1(self):
         return getattr(self, self.norm1_name)
@@ -98,9 +104,27 @@ class TransformerEncoderLayer(BaseModule):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.normal_(m.bias, std=1e-6)
 
-    def forward(self, x):
+    def forward_old(self, x):
         x = x + self.attn(self.norm1(x))
         x = self.ffn(self.norm2(x), identity=x)
+        return x
+
+    def forward(self, x):
+        identity = x
+        identity = self.quant1(identity)
+        x = self.quant1(x)
+        x = self.norm1(x)
+        x = self.dequant(x)
+        x = self.attn(x)
+        x = self.quant2(x)
+        x = self.f_add.add(x, identity)
+
+        identity = x
+        x = self.norm2(x)
+        x = self.dequant(x)
+        identity = self.dequant(identity)
+        x = self.ffn(x, identity=identity)
+
         return x
 
 
@@ -217,6 +241,8 @@ class VisionTransformerQ(BaseBackbone):
                  layer_cfgs=dict(),
                  init_cfg=None):
         super(VisionTransformerQ, self).__init__(init_cfg)
+        self.quant = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
 
         if isinstance(arch, str):
             arch = arch.lower()
@@ -234,6 +260,9 @@ class VisionTransformerQ(BaseBackbone):
         self.embed_dims = self.arch_settings['embed_dims']
         self.num_layers = self.arch_settings['num_layers']
         self.img_size = to_2tuple(img_size)
+
+        for i in range(self.num_layers):
+            setattr(self, f'quant{i+1}', torch.quantization.QuantStub())
 
         # Set patch embedding
         _patch_cfg = dict(
@@ -343,9 +372,15 @@ class VisionTransformerQ(BaseBackbone):
         """Interface for backward-compatibility."""
         return resize_pos_embed(*args, **kwargs)
 
+    def insert_observers(self):
+        for layer in self.layers:
+            layer.insert_observers()
+
     def forward(self, x):
+        x = self.quant(x)
         B = x.shape[0]
         x, patch_resolution = self.patch_embed(x)
+        x = self.dequant(x)
 
         # stole cls_tokens impl from Phil Wang, thanks
         cls_tokens = self.cls_token.expand(B, -1, -1)
@@ -364,7 +399,9 @@ class VisionTransformerQ(BaseBackbone):
 
         outs = []
         for i, layer in enumerate(self.layers):
+            quant = getattr(self, f'quant{i+1}')
             x = layer(x)
+            x = quant(x)
 
             if i == len(self.layers) - 1 and self.final_norm:
                 x = self.norm1(x)
@@ -379,10 +416,12 @@ class VisionTransformerQ(BaseBackbone):
                     patch_token = x.reshape(B, *patch_resolution, C)
                     patch_token = patch_token.permute(0, 3, 1, 2)
                     cls_token = None
+                patch_token = self.dequant(patch_token)
                 if self.output_cls_token:
                     out = [patch_token, cls_token]
                 else:
                     out = patch_token
                 outs.append(out)
+            x = self.dequant(x)
 
         return tuple(outs)

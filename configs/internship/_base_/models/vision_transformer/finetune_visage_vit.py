@@ -9,7 +9,7 @@ model = dict(
         type='VisionTransformerQ', arch='b', img_size=224, patch_size=16, drop_rate=0.1),
     neck=None,
     head=dict(
-        type='VisionTransformerClsHead',
+        type='VisionTransformerClsHeadQ',
         num_classes=200,
         in_channels=768,
         loss=dict(

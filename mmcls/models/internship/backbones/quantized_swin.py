@@ -70,7 +70,6 @@ class SwinBlock(BaseModule):
         self.with_cp = with_cp
         self.quant1 = torch.quantization.QuantStub()
         self.quant2 = torch.quantization.QuantStub()
-        self.quant3 = torch.quantization.QuantStub()
         self.dequant = torch.quantization.DeQuantStub()
         self.f_add = torch.nn.quantized.FloatFunctional()
         # self.q_add = torch.nn.quantized.QFunctional()
@@ -109,12 +108,12 @@ class SwinBlock(BaseModule):
 
         def _inner_forward(x):
             identity = x
+            identity = self.quant1(identity)
             x = self.quant1(x)
             x = self.norm1(x)
             x = self.dequant(x)
             x = self.attn(x, hw_shape)
             x = self.quant2(x)
-            identity = self.quant3(identity)
             x = self.f_add.add(x, identity)
 
             identity = x
@@ -349,6 +348,12 @@ class SwinTransformerQ(BaseBackbone):
                  init_cfg=None,
                  alt_attn=False):
         super(SwinTransformerQ, self).__init__(init_cfg=init_cfg)
+        self.quant = torch.quantization.QuantStub()
+        self.quant1 = torch.quantization.QuantStub()
+        self.quant2 = torch.quantization.QuantStub()
+        self.quant3 = torch.quantization.QuantStub()
+        self.quant4 = torch.quantization.QuantStub()
+        self.dequant = torch.quantization.DeQuantStub()
 
         if isinstance(arch, str):
             arch = arch.lower()
@@ -369,13 +374,6 @@ class SwinTransformerQ(BaseBackbone):
         self.use_abs_pos_embed = use_abs_pos_embed
         self.interpolate_mode = interpolate_mode
         self.frozen_stages = frozen_stages
-
-        self.quant = torch.quantization.QuantStub()
-        self.quant1 = torch.quantization.QuantStub()
-        self.quant2 = torch.quantization.QuantStub()
-        self.quant3 = torch.quantization.QuantStub()
-        self.quant4 = torch.quantization.QuantStub()
-        self.dequant = torch.quantization.DeQuantStub()
 
         _patch_cfg = dict(
             in_channels=in_channels,
@@ -437,6 +435,9 @@ class SwinTransformerQ(BaseBackbone):
             dpr = dpr[depth:]
             embed_dims.append(stage.out_channels)
 
+        for i in range(len(self.stages)):
+            setattr(self, f'quant{i+1}', torch.quantization.QuantStub())
+
         for i in out_indices:
             if norm_cfg is not None:
                 norm_layer = build_norm_layer(norm_cfg, embed_dims[i + 1])[1]
@@ -457,7 +458,7 @@ class SwinTransformerQ(BaseBackbone):
             trunc_normal_(self.absolute_pos_embed, std=0.02)
 
     def insert_observers(self):
-        for i, stage in enumerate(self.stages):
+        for stage in self.stages:
             stage.insert_observers()
 
     def quantize_rel_position_bias(self):
